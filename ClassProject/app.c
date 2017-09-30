@@ -43,3 +43,8 @@ int main(void)
     // Start multitasking and give control to uC/OS-III
     OSStart(&err);
 }
+
+extern void RHao_init(char teamNumber){
+  
+  
+}
