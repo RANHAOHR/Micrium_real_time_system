@@ -9,20 +9,10 @@
 *                                       LOCAL GLOBAL VARIABLES
 *********************************************************************************************************
 */
-#define PI 3.14159265358979323846
+#define M_PI 3.14159265358979323846
 
- int x_Left = MINX + 250;
- int y_Left = MINY + 250;
- int x_Right = MAXX - 200;
- int y_Right = MAXY -  200;
-//int x_Left = 350;
-//int y_Left = 350;
-//int x_Right = 550;
-//int y_Right = 450;
-
-
-float delta_t = 10;
-float danger_range = 100.0;
+float stuck_radius = 350;
+float danger_range = 300.0;
 
 bool tank_reverse; //indicating the reverse
 int tank_ID; //currentl 1
@@ -35,11 +25,24 @@ static OS_SEM done_danger_check;
 typedef struct {int ID; bool status; bool reverse; Point position; float heading; float speed; int region;} tankInfo;
 typedef struct {float steer; float acceleration;} controlVector;
 typedef struct {bool stuck; bool missile;} dangerInfo;
-typedef struct {int num; int ID[3]; float relative_distance[3]; float relative_bear[3];} missileInfo; // indicate the missiles
+typedef struct {int num; int ID[3];float relative_distance[3]; float relative_bear[3]; int missile_region; int type[3];} missileInfo; // indicate the missiles
 typedef struct {tankInfo myTank; dangerInfo danger; RadarData radar; controlVector control; missileInfo missiles;} tank_data;
 
 Tank* tank_target;
 tank_data total_data; //necessary datas of the current tank
+
+float front_limit_pos_1 = M_PI /8;
+float front_limit_neg_1 = -1* M_PI /8;
+float front_limit_pos_2 = M_PI /6;
+float front_limit_neg_2 = -1* M_PI /6;
+
+float back_limit_pos_1 = 7 * M_PI / 8;
+float back_limit_neg_1 = -7 * M_PI / 8;
+float back_limit_pos_2 = 5* M_PI /6;
+float back_limit_neg_2 = -5* M_PI /6;
+
+int mid_x = MINX + (MAXX - MINX) /2;
+int mid_y = MINY + (MAXY - MINY) /2;
 
 /*
 *********************************************************************************************************
@@ -47,231 +50,165 @@ tank_data total_data; //necessary datas of the current tank
 *********************************************************************************************************
 */
 
-int indicatedRegion(float angle){
+int indicatedRegion(float dx, float dy){
 
-  int region = 2*angle/PI;
-
+  int region;
+  if(dx > 0 && dy >0){
+    region = 1;
+  }
+  else if(dx < 0 && dy >0){
+    region = 2;
+  }
+  else if(dx < 0 && dy <0){
+    region = 3;
+  }
+  else if(dx > 0 && dy <0){
+    region = 4;
+  }
   return region;
 }
-
-float getRelativeDirection(float missile_bearing){
-
-  float relative_angle;
-  relative_angle = missile_bearing;
-  if (PI/2 < missile_bearing <= PI)
-  {
-    relative_angle = PI - missile_bearing;
-  }
-  else if(PI< missile_bearing <=3*PI/2){
-    relative_angle = missile_bearing - PI;
-  }
-  else if(missile_bearing > 3*PI/2){
-    relative_angle = 2*PI - missile_bearing;
-  } //for -2pi because
-  else if( -1* PI/2 <missile_bearing < 0 ){
-    relative_angle = fabs(missile_bearing);
-  }
-  else if( -3* PI / 2 <missile_bearing < -1* PI/2 ){
-    relative_angle = fabs(missile_bearing + PI);  //either way with the abs
-  }
-  else if( -2* PI <missile_bearing < -3* PI/2 ){
-    relative_angle = fabs(missile_bearing + 2*PI);
-  }
-
-  return relative_angle;
-}
-
 /*
  * contorller, control the tank to avoid stuck
  */
-controlVector stuckAvoidance(tank_data myTank){
-  controlVector command;
-
-  int x = myTank.myTank.position.x;
-  int y = myTank.myTank.position.y;
-  float direction = myTank.myTank.heading;
-
-  float sensitive = 1;
-
-  float delta_direction;
-  //positive is left, negative is right
-    if (x < x_Left)  {
-      if (direction > PI) {
-        delta_direction = direction -2* PI;
-      }
-      else{
-        delta_direction = direction;
-      }
-      command.steer = -1* delta_direction / sensitive;
-    }
-    if (x > x_Right){
-      command.steer = (PI - direction)  / sensitive;
-    }
-
-   if (y < y_Left) {
-     command.steer = (3*PI/2 - direction)  / sensitive;
-   }
-   if (y > y_Right) {
-     command.steer = (PI/2 - direction)  / sensitive;
-   }
-
-  command.acceleration = 0.3;
-
-  return command;
-
-}
 
 controlVector regionStuckAvoidance(tank_data myTank){
   controlVector command;
 
   int x = myTank.myTank.position.x;
   int y = myTank.myTank.position.y;
-  float region = myTank.myTank.region;
+  int region = myTank.myTank.region;
+  float heading = myTank.myTank.heading;
+
+  int sensitivity = heading / (M_PI /2);
 
   //positive is left, negative is right
-  float minimal_steer = 0.3;
+  float minimal_steer = 0.2;
 
-    if (x < x_Left)  {
-      if (region == 0) command.steer = -minimal_steer;
-      if (region == 1) command.steer = -2*minimal_steer ;
-      if (region == 2) command.steer = 2*minimal_steer;
-      if (region == 3) command.steer = minimal_steer;
+    if (region == 1)  {
+      if (sensitivity == 0) command.steer = -minimal_steer;
+      if (sensitivity == 1) command.steer = -2*minimal_steer ;
+      if (sensitivity == 2) command.steer = 2*minimal_steer;
+      if (sensitivity == 3) command.steer = minimal_steer;
     }
-    if (x > x_Right){
-      if (region == 0) command.steer = 2*minimal_steer;
-      if (region == 1) command.steer = minimal_steer;
-      if (region == 2) command.steer = -minimal_steer;
-      if (region == 3) command.steer = -2*minimal_steer;
+    if (region == 2){
+      if (sensitivity == 0) command.steer = -2*minimal_steer;
+      if (sensitivity == 1) command.steer =  2*minimal_steer;
+      if (sensitivity == 2) command.steer =    minimal_steer;
+      if (sensitivity == 3) command.steer = -1*minimal_steer;
     }
-    if (y < y_Left) {
-      if (region == 0) command.steer = -minimal_steer;
-      if (region == 1) command.steer = -2*minimal_steer;
-      if (region == 2) ;
-      if (region == 3) ;
+    if (region == 3) {
+      if (sensitivity == 0) command.steer = minimal_steer;
+      if (sensitivity == 1) ;
+      if (sensitivity == 2) ;
+      if (sensitivity == 3) command.steer = -2*minimal_steer;
     }
-     if (y > y_Right) {
-      if (region == 0) ;
-      if (region == 1) ;
-      if (region == 2) command.steer = -1*minimal_steer;
-      if (region == 3) command.steer = -2*minimal_steer;
+     if (region == 4) {
+      if (sensitivity == 0) ;
+      if (sensitivity == 1) ;
+      if (sensitivity == 2) command.steer = -2*minimal_steer;
+      if (sensitivity == 3) command.steer = minimal_steer;
     }
-  command.acceleration = 0.3;
+  command.acceleration = 1;
 
   return command;
 
 }
 
+int getTankType(float missile_bearing){
+
+    float missle_heading;
+    int tank_type;
+
+    if (missile_bearing > M_PI) {
+      missle_heading = missile_bearing - 2*M_PI;
+    }
+
+    if ( (0 <= missle_heading <= front_limit_pos_1 )|| (-1*M_PI <= missle_heading <= back_limit_neg_1)) {
+        tank_type = 1;
+    }
+    else if ((front_limit_neg_1 <= missle_heading < 0) || (back_limit_pos_1 <= missle_heading < M_PI)) {
+        tank_type = 2;
+    }
+    else if ((front_limit_pos_1 < missle_heading <= front_limit_pos_2 )|| (back_limit_neg_1 < missle_heading <= back_limit_neg_2)) {
+        tank_type = 3;
+    }
+    else if ((front_limit_neg_2 < missle_heading < front_limit_neg_1) || (back_limit_pos_2 < missle_heading < back_limit_pos_1)) {
+      tank_type = 4;
+    }
+    else{
+      tank_type = 5;
+    }
+
+   return tank_type;
+}
 /*
  * contorller, control the tank to avoid missile
  */
+ float singleMissileSteer(float tank_type){
+   float cmd_steer;
+   if (tank_type == 1) {
+      cmd_steer = 0.6;
+   }else if (tank_type == 2) {
+     cmd_steer = -0.6;
+   }else if (tank_type == 3) {
+     cmd_steer = 0.3;
+   }else if (tank_type == 4) {
+     cmd_steer = -0.3;
+   }
+   else if (tank_type == 5) {
+     cmd_steer = 0.0;
+   }
+   return cmd_steer;
+ }
 controlVector dwaMissileAvoid(tank_data myTank){
     controlVector command;
 
-    int numSample = 30;
+    float cmd_steer = 0.0;
+    float cmd_vel = 1.0;
+    int num_missles = myTank.missiles.num;
 
-    float heading[30];
-    float expectation[30];
-    float acc_scale[30];
-    float distance[30];
-    float dealta_heading[30];
+    float tank_type;
+    float missle_1;
+    float missle_2;
+    float missle_3;
+    float ave_diret;
+    int ave_type;
 
-    float new_heading;
-    float resolution_theta = 2*PI / numSample;
-    float current_heading = myTank.myTank.heading;
-
-    float direct_total = 0;
-    float distance_total = 0;
-
-    float vel = myTank.myTank.speed;
-
-    float delta_distance;
-    float current_distance;
-
-    //initialize
-    for (int i = 0; i < numSample; i++) {
-      acc_scale[i] = 2.0;
-      float delta_theta = i * resolution_theta;
-      if( i > 24){
-         dealta_heading[i] = delta_theta - 2*PI;
-      }else{
-        dealta_heading[i] = delta_theta;
-      }
+    switch(num_missles){
+      case 1:
+          tank_type = myTank.missiles.type[0];
+          cmd_steer = singleMissileSteer(tank_type);
+          cmd_vel = 1.0;
+          break;
+      case 2:
+          missle_1 = myTank.missiles.relative_bear[0];
+          missle_2 = myTank.missiles.relative_bear[1];
+          ave_diret = (missle_1 + missle_2) / 2;
+          ave_type =  getTankType(ave_diret);
+          cmd_steer = singleMissileSteer(ave_type);
+          cmd_vel = 1.0;
+          break;
+      case 3:
+          missle_1 = myTank.missiles.relative_bear[0];
+          missle_2 = myTank.missiles.relative_bear[1];
+          missle_3 = myTank.missiles.relative_bear[2];
+          ave_diret = (missle_1 + missle_2 + missle_3) / 3;
+          ave_type =  getTankType(ave_diret);
+          cmd_steer = singleMissileSteer(ave_type);
+          cmd_vel = 1.5;
+          break;
     }
 
-    //starting the dwa
-    for (int i = 0; i < numSample; i++) {
-      // float delta_theta = i *  resolution_theta;
-      // new_heading = current_heading - dealta_heading[i];
-      // if (new_heading < 0.0) {
-      //     new_heading = new_heading + 2*PI;
-      // }
-
-      float update_direction = 0.0;
-      float update_distance = 0.0;
-
-          for (int j = 0; j < myTank.missiles.num; j++) {
-              float temp_direction;
-              //update heading values
-              if(i < 25){
-                temp_direction = myTank.missiles.relative_bear[j] - dealta_heading[i];
-              }
-              else{
-                temp_direction = myTank.missiles.relative_bear[j] - (dealta_heading[i] + 2*PI);
-              }
-
-              if (temp_direction > 2*PI) {
-                  temp_direction = temp_direction - 2*PI;
-              }
-              float delta_direction = getRelativeDirection(temp_direction);
-              update_direction += fabs(delta_direction);
-
-              //update distance values
-              delta_distance = (vel + acc_scale[i]) * delta_t;
-              current_distance = myTank.missiles.relative_distance[j];
-              float new_distance = pow(delta_distance, 2) + pow(current_distance,2) - 2*delta_distance*current_distance*cos(temp_direction);
-              new_distance = sqrt(new_distance);
-              update_distance += new_distance;
-
-          }
-
-      heading[i] = update_direction;
-      direct_total += heading[i];
-
-      distance[i] = update_distance;
-      distance_total += distance[i];
-
+    if(cmd_steer > STEER_LIMIT){
+      cmd_steer = STEER_LIMIT;
+    }
+    if(cmd_steer < -1*STEER_LIMIT){
+      cmd_steer = -1*STEER_LIMIT;
     }
 
-    float alpha = 0.3;
-    float beta = 0.7;
-    float maxExpect = -1.0;
-    //normalize the vectors
-
-    int max_index = 0;
-    for (int i = 0; i < numSample; i++) {
-        heading[i] =  heading[i] / direct_total;
-        distance[i] = distance[i] / distance_total;
-        expectation[i] = alpha *heading[i] + beta * distance[i];
-
-        if (expectation[i] > maxExpect) {
-              maxExpect = expectation[i];
-              max_index = i; //corresponding to the former
-        }
-    }
-
-    float delta_steer =  dealta_heading[max_index] /delta_t;
-    float delta_acceleration = acc_scale[max_index];
-
-    if(delta_steer > STEER_LIMIT){
-      delta_steer = STEER_LIMIT;
-    }
-    if(delta_steer < -1*STEER_LIMIT){
-      delta_steer = -1*STEER_LIMIT;
-    }
-
-    command.steer = delta_steer;
-    command.acceleration = delta_acceleration;
-    printf("command.steer %f\n", command.steer);
+    command.steer = cmd_steer;
+    command.acceleration = cmd_vel;
+    //printf("command.steer %f\n", command.steer);
   return command;
  }
 
@@ -313,25 +250,37 @@ tank_data sensing(Tank* myTank){
   sensing_info.myTank.position = get_position(myTank);
   sensing_info.myTank.heading = get_heading (myTank);
   sensing_info.myTank.speed = get_speed(myTank);
-
-  sensing_info.myTank.region = indicatedRegion(sensing_info.myTank.heading);
   // sensing_info.danger.stuck = is_stuck(myTank);
   sensing_info.missiles.num = sensing_info.radar.numMissiles;  //detected number of missiles
   //printf("sensing_info.radar.numMissiles is : %d \n", sensing_info.radar.numMissiles);
-   for (int i = 0; i < sensing_info.missiles.num; i++){
-      sensing_info.danger.missile = TRUE;
-   }
 
   /* first check the risk of getting stuck */
-  if ((sensing_info.myTank.position.x < x_Left) || (sensing_info.myTank.position.x > x_Right) ||  (sensing_info.myTank.position.y < y_Left) || (sensing_info.myTank.position.y > y_Right))  {
-     sensing_info.danger.stuck = TRUE;
+  float dx = mid_x - sensing_info.myTank.position.x;
+  float dy = mid_y - sensing_info.myTank.position.y;
+  float radius = sqrt(pow(dx,2) + pow(dy,2));
+  if(radius > stuck_radius ){
+    sensing_info.danger.stuck = TRUE;
   }
-  else sensing_info.danger.stuck = FALSE;
+  else{
+    sensing_info.danger.stuck = FALSE;
+  }
+
+  sensing_info.myTank.region = indicatedRegion(dx,dy);
+
+  if (sensing_info.missiles.num > 0) {
+    sensing_info.danger.missile = TRUE;
+  }else {
+    sensing_info.danger.missile = FALSE;
+  }
 
    /* read missile direction and bearing */
    for (int i = 0; i< sensing_info.missiles.num; i++){
-     sensing_info.missiles.relative_distance[i] = sensing_info.radar.missileDistances[i];
-     sensing_info.missiles.relative_bear[i] = sensing_info.radar.missileBearings[i];
+     if(sensing_info.radar.missileDistances[i] < danger_range){
+        sensing_info.missiles.relative_distance[i] = sensing_info.radar.missileDistances[i];
+        sensing_info.missiles.relative_bear[i] = sensing_info.radar.missileBearings[i];
+        sensing_info.missiles.type[i] = getTankType(sensing_info.missiles.relative_bear[i]);
+     }
+
    }
 
  return sensing_info;
@@ -354,6 +303,7 @@ static void sensing_task(void* p_arg){
        for (int i = 0; i< 3; i++){
          total_data.missiles.relative_distance[i] = 10000;  //starting without detecting
          total_data.missiles.relative_bear[i] = 10000;
+         total_data.missiles.type[i] = 5; //pretend it is not there
        }
 
        total_data = sensing(tank_target);
