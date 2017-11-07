@@ -13,13 +13,12 @@
 
 float danger_range = 300.0;
 
-int x_Uplimit = 550;
-int x_Downlimit =140;
-int y_Uplimit =500;
-int y_Downlimit = 100;
+int x_Uplimit = 700;
+int x_Downlimit =50;
+int y_Uplimit =550;
+int y_Downlimit = 150;
 
 bool tank_reverse; //indicating the reverse
-bool stuck_reverse;
 int tank_ID; //currentl 1
 int reverse_count;
 
@@ -155,7 +154,6 @@ controlVector avoid_stuck(tank_data INFO){
       if (dx < 0) {if(direction == 2){command.steer = -0.15;}}
       if (dx > 0) {if(direction == 3){command.steer = 0.15;}}
     }
-
   }else if (reverse_count%2 == 1) {
     if (x > x_Uplimit) {
       if (direction == 1){command.steer = 0.27;}
@@ -184,7 +182,6 @@ controlVector avoid_stuck(tank_data INFO){
   }
 
   command.acceleration = 1;
-
   return command;
 
 }
@@ -292,20 +289,18 @@ tank_data controlling(Tank* tankName, tank_data myTank){
        }
       }
 //      else  if (total_data.danger.stuck && total_data.control.acceleration == 0){  //may be want to reduce the velocity to 0 first
-//          stuck_reverse = !stuck_reverse;
 //          set_reverse(tank_target, stuck_reverse);
 //          reverse_count +=1;
-//          total_data.danger.stuck = FALSE;
 //      }
 
     if (myTank.danger.missile){
     //printf("in missle command\n");
      command = dwaMissileAvoid(myTank);
     }
-    else if (myTank.danger.stuck){
-    //printf("in missle command\n");
-     command = avoid_stuck(myTank);
-    }
+    // else if (myTank.danger.stuck){
+    // //printf("in missle command\n");
+    //  command = avoid_stuck(myTank);
+    // }
     else{
       command.acceleration = 1.5;
       command.steer = 0.0;
@@ -414,7 +409,7 @@ static void control_task(void* p_arg){
   while (DEF_TRUE) {
        OSSemPend(&done_alarm_check,0,OS_OPT_PEND_BLOCKING,&ts,&err);
 
-      total_data = controlling(tank_target, total_data);
+       total_data = controlling(tank_target, total_data);
        OSSemPost(&done_control, OS_OPT_POST_1 | OS_OPT_POST_NO_SCHED,&err);
     }
 
