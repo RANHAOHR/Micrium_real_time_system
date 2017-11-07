@@ -7,8 +7,8 @@
 #define MAXY 700
 #define STEER_LIMIT 0.785398163f  // Maximum possible wheel angle (45 deg)
 #define ACCELERATE_LIMIT 5.0f
-#define MAX_MISSILES 3
-#define NUM_TANKS 1
+#define MAX_MISSILES 10
+#define NUM_TANKS 4
 
 // Represents a point in 2D space
 typedef struct { int x, y; } Point;

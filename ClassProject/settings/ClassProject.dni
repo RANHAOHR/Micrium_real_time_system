@@ -92,6 +92,8 @@ SumSortOrder=0
 LoggingEnabled=_ 0
 LogFile=_ ""
 Category=_ 0
+[Trace2]
+Enabled=0
 [SWOTraceWindow]
 PcSampling=0
 InterruptLogs=1

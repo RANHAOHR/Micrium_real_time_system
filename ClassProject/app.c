@@ -33,12 +33,13 @@ int main(void)
 
     BSP_IntDisAll();      // Disable all interrupts
     OSInit(&err);         // Initialize uC/OS-III
+    OSSchedRoundRobinCfg(DEF_TRUE, 0, &err);
 
     // Initialize student functions here
     RHao_init(1);
 
     // After initializing user functions, initialize framework
-    initialize(FALSE);
+    initialize(TRUE);
 
     // Start multitasking and give control to uC/OS-III
     OSStart(&err);

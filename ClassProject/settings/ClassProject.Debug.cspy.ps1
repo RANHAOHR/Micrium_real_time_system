@@ -23,9 +23,9 @@ param([String]$debugfile = "");
 
 if ($debugfile -eq "")
 {
-& "C:\Program Files (x86)\IAR Systems\Embedded Workbench 8.0\common\bin\cspybat" -f "C:\EECE6354-Project-PartI\ClassProject\settings\ClassProject.Debug.general.xcl" --backend -f "C:\EECE6354-Project-PartI\ClassProject\settings\ClassProject.Debug.driver.xcl" 
+& "C:\Program Files (x86)\IAR Systems\Embedded Workbench 8.0\common\bin\cspybat" -f "C:\EECE6354-Project-Part-II\ClassProject\settings\ClassProject.Debug.general.xcl" --backend -f "C:\EECE6354-Project-Part-II\ClassProject\settings\ClassProject.Debug.driver.xcl" 
 }
 else
 {
-& "C:\Program Files (x86)\IAR Systems\Embedded Workbench 8.0\common\bin\cspybat" -f "C:\EECE6354-Project-PartI\ClassProject\settings\ClassProject.Debug.general.xcl" --debug_file=$debugfile --backend -f "C:\EECE6354-Project-PartI\ClassProject\settings\ClassProject.Debug.driver.xcl" 
+& "C:\Program Files (x86)\IAR Systems\Embedded Workbench 8.0\common\bin\cspybat" -f "C:\EECE6354-Project-Part-II\ClassProject\settings\ClassProject.Debug.general.xcl" --debug_file=$debugfile --backend -f "C:\EECE6354-Project-Part-II\ClassProject\settings\ClassProject.Debug.driver.xcl" 
 }
