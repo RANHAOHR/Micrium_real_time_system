@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <time.h>
 #include "BattlefieldLib.h"
 
 /*
@@ -9,15 +10,9 @@
 *                                       LOCAL GLOBAL VARIABLES
 *********************************************************************************************************
 */
-#define M_PI 3.14159265358979323846
+#define M_PI 3.14159265358
 
 float danger_range = 300.0;
-
-int x_Uplimit = 700;
-int x_Downlimit =50;
-int y_Uplimit =550;
-int y_Downlimit = 150;
-
 bool tank_reverse1; //indicating the reverse
 bool tank_reverse2; //indicating the reverse
 
@@ -26,15 +21,32 @@ int RHao_tankID2;
 int RHao_enemyID1;
 int RHao_enemyID2;
 
+bool RHao_reverseInd1 = FALSE;
+bool RHao_reverseInd2 = FALSE;
+
+int reverseCnt1 = 0;
+int reverseCnt2 = 0;
+int lastCnt1 = 0;
+int lastCnt2 = 0;
+
 static OS_SEM RHao_done_control;
 static OS_SEM RHao_done_sensing;
 static OS_SEM RHao_done_alarmCheck;
 
+static OS_MUTEX RHao_MControl1;
+static OS_MUTEX RHao_MControl2;
+static OS_MUTEX RHao_MSensing1;
+static OS_MUTEX RHao_MSensing2;
+
+static OS_MUTEX RHao_MReverse1;
+static OS_MUTEX RHao_MReverse2;
+
 typedef struct {int ID; bool radarStatus; Point position; float heading; float speed; int region; int teamMateCode;float turretDirect;} tankInfo;
 typedef struct {float steer; float acceleration;} controlVector;
-typedef struct {bool stuck; bool missile;bool tank_reverse;} dangerInfo;
+typedef struct {bool missile; bool tankHits;} dangerInfo;
+typedef struct {int dangerTankNum; int tankIDs[3]; float potentialHits_Direct[3];float potentialHits_Dist[3];} detectTanksInfo;
 typedef struct {int num; float relative_distance[3]; float relative_bear[3]; int missile_region; int type[3];} missileInfo; // indicate the missiles
-typedef struct {tankInfo myTank; dangerInfo danger; RadarData radar; controlVector control; missileInfo missiles;} tank_data;
+typedef struct {tankInfo myTank; detectTanksInfo detectedTanks; dangerInfo danger; RadarData radar; controlVector control; missileInfo missiles;} tank_data;
 
 Tank* RHao_tank1;
 Tank* RHao_tank2;
@@ -105,6 +117,8 @@ int getMissileType(float missile_bearing, float missile_distance){
  */
  float singleMissileSteer(float missile_type, tank_data myTank){
    float cmd_steer;
+   //float steer_avoidMissle;
+
    if (missile_type == 1) {
       cmd_steer = 0.6;
    }else if (missile_type == 2) {
@@ -124,6 +138,7 @@ int getMissileType(float missile_bearing, float missile_distance){
      cmd_steer = 0.0;
    }
 
+   //steer_avoidMissle = cmd_steer;
    return cmd_steer;
  }
 
@@ -198,40 +213,89 @@ controlVector dwaMissileAvoid(tank_data myTank){
 
     command.steer = cmd_steer;
     command.acceleration = cmd_vel;
-    //printf("command.steer %f\n", command.steer);
+
   return command;
  }
 
-/**************************
- * Control task function
- ***************************/
 bool safeReverseStuck(Tank* tankName, tank_data myTank){
 
-    bool reverse_danger = FALSE;
+    bool safe_reverse = FALSE;
 
     if (is_stuck(tankName)){  //if the tank is stuck
+      safe_reverse = TRUE;
       float temp_dist;
       int num = myTank.missiles.num;
       for (int k = 0; k < num; k++) {
         temp_dist = myTank.missiles.relative_distance[k];
         if (temp_dist < 90) {
-          reverse_danger = TRUE;
-        }else{reverse_danger = FALSE;}
+          safe_reverse = FALSE;
+          break;
+        }else{safe_reverse = TRUE;}
       }
     }
-    return reverse_danger;
+
+    return safe_reverse;
 }
-tank_data controlling(Tank* tankName, tank_data myTank){
+
+
+controlVector avoidTankHits(tank_data myTank, bool reverseInd){
+
+    controlVector command;
+    command.steer = 0.0;
+    float steer_avoidHit = 0.0;
+    int total_num = 0;
+    float total_direct = 0;
+    float current_direction = 0.0;
+
+    float thresh = 1.5;
+    for (int j = 0; j < myTank.detectedTanks.dangerTankNum; j++) {
+      current_direction = myTank.detectedTanks.potentialHits_Direct[j];
+      if (( current_direction> 0.0 && current_direction < thresh) || (current_direction > -1*thresh && current_direction < 0.0)) {
+        total_direct += current_direction;
+        total_num += 1;
+      }
+    }
+
+    if (myTank.detectedTanks.dangerTankNum > 0) {
+      float direction = total_direct / total_num;
+      //float direction = myTank.detectedTanks.potentialHits_Direct[0];
+      if ( direction > 0.0 && direction <= thresh) {
+          steer_avoidHit = -0.4;
+      }
+      else if( direction > -1*thresh && direction < 0.0 ){
+        steer_avoidHit = 0.4;
+      }
+    }
+
+  if(!reverseInd){
+      command.steer = steer_avoidHit;
+  }else{
+      command.steer = -steer_avoidHit;
+  }
+
+  command.acceleration = 0.9;
+
+  return command;
+
+}
+
+
+/***************************
+ * Control task function
+ ***************************/
+tank_data controlling(Tank* tankName, tank_data myTank, bool reverseInd){
   controlVector command;
 
     if (myTank.danger.missile){
-    //printf("in missle command\n");
      command = dwaMissileAvoid(myTank);
     }
+    else if (myTank.danger.tankHits) {
+      command = avoidTankHits(myTank, reverseInd);
+    }
     else{
-      command.acceleration = 1.5;
-      command.steer = 0.0;
-   }
+    command.acceleration = 1.5;
+    command.steer = 0.0;
+    }
 
   myTank.control.acceleration = command.acceleration;
   myTank.control.steer = command.steer;
@@ -242,10 +306,28 @@ tank_data controlling(Tank* tankName, tank_data myTank){
   return myTank;
  }
 
+
 /*****************************************************
  * Sensing task function
  *****************************************************/
-tank_data sensing(Tank* myTank){
+float bearingDisambguity(float angle){
+  float sat_angle = angle;
+  if(angle > M_PI ){
+    sat_angle = angle - 2*M_PI;
+  }
+  else if (angle < -1* M_PI){
+    sat_angle = angle + 2*M_PI;
+  }
+
+  return sat_angle;
+}
+
+tank_data sensing(Tank* myTank, bool revese_count){
+
+  int counter = 0;
+  if(revese_count == TRUE){
+    counter = 1;
+  }
 
     tank_data sensing_info;
     sensing_info.myTank.radarStatus = poll_radar(myTank, &sensing_info.radar); //get the radar
@@ -259,16 +341,12 @@ tank_data sensing(Tank* myTank){
       sensing_info.missiles.relative_distance[i] = 10000;  //starting without detecting
       sensing_info.missiles.relative_bear[i] = 10000;
       sensing_info.missiles.type[i] = 5; //pretend it is not there
-    }
 
-    //printf("sensing_info.radar.numMissiles is : %d \n", sensing_info.radar.numMissiles);
-    int current_x = sensing_info.myTank.position.x;
-    int current_y = sensing_info.myTank.position.y;
-    if ((current_x < x_Downlimit) || (current_x > x_Uplimit) ||  (current_y < y_Downlimit) || (current_y> y_Uplimit) )  {
-       sensing_info.danger.stuck = TRUE;
     }
-    else {
-      sensing_info.danger.stuck = FALSE ;
+    for (int i = 0; i< 4; i++){
+      sensing_info.detectedTanks.potentialHits_Direct[i] = 0;
+      sensing_info.detectedTanks.potentialHits_Dist[i] = 10000; //start without detecting
+
     }
 
     sensing_info.missiles.num = 0;
@@ -283,9 +361,22 @@ tank_data sensing(Tank* myTank){
     }
 
     if (sensing_info.missiles.num > 0) {
-    sensing_info.danger.missile = TRUE;
-    }else {
-      sensing_info.danger.missile = FALSE;
+        sensing_info.danger.missile = TRUE;
+    }else {sensing_info.danger.missile = FALSE;}
+
+    /* read detected tanks direction and bearing */
+    sensing_info.detectedTanks.dangerTankNum = sensing_info.radar.numTanks;
+    for (int i = 0; i< sensing_info.detectedTanks.dangerTankNum; i++){
+      sensing_info.detectedTanks.tankIDs[i] = sensing_info.radar.tankIDs[i];
+      sensing_info.detectedTanks.potentialHits_Direct[i] = bearingDisambguity(sensing_info.radar.tankBearings[i] + counter*M_PI);
+      sensing_info.detectedTanks.potentialHits_Dist[i] = sensing_info.radar.tankDistances[i];
+    }
+
+    sensing_info.danger.tankHits = FALSE;
+    for (int i = 0; i < sensing_info.detectedTanks.dangerTankNum; i++) {
+      if ( sensing_info.detectedTanks.potentialHits_Dist[i] < 260) {
+        sensing_info.danger.tankHits = TRUE;
+      }
     }
 
     return sensing_info;
@@ -299,22 +390,24 @@ static void RHao_sensing_task(void* p_arg){
     OS_ERR err;
 
     while (DEF_TRUE) {
+      OSSemPend(&RHao_done_control,0,OS_OPT_PEND_BLOCKING,&ts,&err);
 
-       OSSemPend(&RHao_done_control,0,OS_OPT_PEND_BLOCKING,&ts,&err);
+      OSMutexPend(&RHao_MSensing1,0,OS_OPT_PEND_BLOCKING,&ts,&err);
+      RHao_tankData1.myTank.ID = RHao_tankID1;  //first set the ID
+      RHao_tankData1.myTank.teamMateCode = RHao_tankID2;
+      RHao_tankData1 = sensing(RHao_tank1, RHao_reverseInd1);
+      OSMutexPost(&RHao_MSensing1,OS_OPT_POST_1,&err);
 
-       RHao_tankData1.myTank.ID = RHao_tankID1;  //first set the ID
-       RHao_tankData1.myTank.teamMateCode = RHao_tankID2;
-       RHao_tankData1 = sensing(RHao_tank1);
+      OSMutexPend(&RHao_MSensing2,0,OS_OPT_PEND_BLOCKING,&ts,&err);
+      RHao_tankData2.myTank.ID = RHao_tankID2;  //second tank
+      RHao_tankData2.myTank.teamMateCode = RHao_tankID1;
+      RHao_tankData2 = sensing(RHao_tank2, RHao_reverseInd2);
+      OSMutexPost(&RHao_MSensing2,OS_OPT_POST_1,&err);
 
-       RHao_tankData2.myTank.ID = RHao_tankID2;  //second tank
-       RHao_tankData2.myTank.teamMateCode = RHao_tankID1;
-       RHao_tankData2 = sensing(RHao_tank2);
+      BSP_LED_Off(0);
 
-       BSP_LED_Off(0);
-
-       OSSemPost(&RHao_done_sensing, OS_OPT_POST_1 | OS_OPT_POST_NO_SCHED,&err);
+      OSSemPost(&RHao_done_sensing, OS_OPT_POST_1 | OS_OPT_POST_NO_SCHED,&err);
     }
-
 }
 
 //after at the sensing info, make sure if there is no danger
@@ -326,16 +419,6 @@ static void RHao_alarm_task(void* p_arg){
 
        OSSemPend(&RHao_done_sensing,0,OS_OPT_PEND_BLOCKING,&ts,&err);
 
-       if (RHao_tankData1.danger.missile){
-          BSP_LED_On(1);
-       }
-       else BSP_LED_Off(1);
-
-       if (RHao_tankData2.danger.missile){
-          BSP_LED_On(2);
-       }
-       else BSP_LED_Off(2);
-
        OSSemPost(&RHao_done_alarmCheck, OS_OPT_POST_1 | OS_OPT_POST_NO_SCHED,&err);
     }
 }
@@ -346,30 +429,51 @@ static void RHao_control_task(void* p_arg){
   OS_ERR err;
 
   while (DEF_TRUE) {
-      OSSemPend(&RHao_done_alarmCheck,0,OS_OPT_PEND_BLOCKING,&ts,&err);
+     OSSemPend(&RHao_done_alarmCheck,0,OS_OPT_PEND_BLOCKING,&ts,&err);
 
-      bool reverse1 = safeReverseStuck(RHao_tank1,RHao_tankData1);
-      bool reverse2 = safeReverseStuck(RHao_tank2,RHao_tankData2);
-      if (!reverse1){  //if the tank is stuck
-          tank_reverse1 = !tank_reverse1;
-          set_reverse(RHao_tank1,tank_reverse1);
-      }
-      if (!reverse2){  //if the tank is stuck
-          tank_reverse2 = !tank_reverse2;
-          set_reverse(RHao_tank2,tank_reverse2);
-      }
-    //  if (is_stuck(RHao_tank1)){  //if the tank is stuck
-    //      tank_reverse1 = !tank_reverse1;
-    //      set_reverse(RHao_tank1,tank_reverse1);
-    //  }
-    //  if (is_stuck(RHao_tank2)){  //if the tank is stuck
-    //      tank_reverse2 = !tank_reverse2;
-    //      set_reverse(RHao_tank2,tank_reverse2);
-    //  }
+    OSMutexPend(&RHao_MControl1,0,OS_OPT_PEND_BLOCKING,&ts,&err);
+    bool reverse1 = safeReverseStuck(RHao_tank1,RHao_tankData1);
+    int last1 = reverseCnt1;
+    if (reverse1){  //if the tank is stuck
+        tank_reverse1 = !tank_reverse1;
+        OSMutexPend(&RHao_MReverse1,0,OS_OPT_PEND_BLOCKING,&ts,&err);
+        reverseCnt1 +=1;
+        set_reverse(RHao_tank1,tank_reverse1);
+        OSMutexPost(&RHao_MReverse1,OS_OPT_POST_1,&err);
+    }
 
-       RHao_tankData1 = controlling(RHao_tank1, RHao_tankData1);
-       RHao_tankData2 = controlling(RHao_tank2, RHao_tankData2);
-       OSSemPost(&RHao_done_control, OS_OPT_POST_1 | OS_OPT_POST_NO_SCHED,&err);
+    if(reverseCnt1 - last1 == 0){
+      if((reverseCnt1-lastCnt1) > abs(reverseCnt1-1) ){
+      RHao_reverseInd1 = !RHao_reverseInd1;
+      reverseCnt1 = 0;
+      }
+    }
+
+    RHao_tankData1 = controlling(RHao_tank1, RHao_tankData1, RHao_reverseInd1);
+    OSMutexPost(&RHao_MControl1,OS_OPT_POST_1,&err);
+
+    OSMutexPend(&RHao_MControl2,0,OS_OPT_PEND_BLOCKING,&ts,&err);
+    bool reverse2 = safeReverseStuck(RHao_tank2,RHao_tankData2);
+    int last = reverseCnt2;
+    if (reverse2){  //if the tank is stuck
+      OSMutexPend(&RHao_MReverse2,0,OS_OPT_PEND_BLOCKING,&ts,&err);
+      reverseCnt2 +=1;
+      tank_reverse2 = !tank_reverse2;
+      set_reverse(RHao_tank2,tank_reverse2);
+      OSMutexPost(&RHao_MReverse2,OS_OPT_POST_1,&err);
+    }
+
+    if(reverseCnt2 - last == 0){
+      if((reverseCnt2-lastCnt2) > abs(reverseCnt2-1) ){
+      RHao_reverseInd2 = !RHao_reverseInd2;
+      reverseCnt2 = 0;
+      }
+    }
+
+    RHao_tankData2 = controlling(RHao_tank2, RHao_tankData2, RHao_reverseInd2);
+    OSMutexPost(&RHao_MControl2,OS_OPT_POST_1,&err);
+
+      OSSemPost(&RHao_done_control, OS_OPT_POST_1 | OS_OPT_POST_NO_SCHED,&err);
     }
 
 }
@@ -385,6 +489,15 @@ void RHao_init(char teamNumber)
       OSSemCreate(&RHao_done_control,"RHao_done_control",1,&err);  // start from a control task
       OSSemCreate(&RHao_done_sensing,"RHao_done_sensing",0,&err); //get the sensing info
       OSSemCreate(&RHao_done_alarmCheck,"RHao_done_alarmCheck",0,&err); //check the high level danger
+
+      OSMutexCreate(&RHao_MControl1,"control1",&err);
+      OSMutexCreate(&RHao_MControl2,"control2",&err);
+      OSMutexCreate(&RHao_MSensing1,"sensing1",&err);
+      OSMutexCreate(&RHao_MSensing2,"sensing2",&err);
+
+      OSMutexCreate(&RHao_MReverse1,"reverse1",&err);
+      OSMutexCreate(&RHao_MReverse2,"reverse2",&err);
+
       // Perform any user-required initializations here
       RHao_tank1 = create_tank(teamNumber,"hao");
       create_turret(RHao_tank1);
