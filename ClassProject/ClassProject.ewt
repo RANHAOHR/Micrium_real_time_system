@@ -2342,6 +2342,9 @@
         <group>
             <name>Students</name>
             <file>
+                <name>$PROJ_DIR$\Students\enemy_app.c</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\Students\RHao_app.c</name>
             </file>
         </group>

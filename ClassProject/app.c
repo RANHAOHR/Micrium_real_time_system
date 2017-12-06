@@ -37,6 +37,7 @@ int main(void)
 
     // Initialize student functions here
     RHao_init(1);
+    enemy_init(2);
 
     // After initializing user functions, initialize framework
     initialize(TRUE);
